@@ -1,0 +1,178 @@
+# llama-server -m .\LFM3-1.7B-Q4_K_M.gguf --port 8080
+import json
+import urllib.request
+from dataclasses import dataclass
+
+
+@dataclass
+class Response:
+    """Structured response from LLM calls."""
+
+    content: str = ""
+    reasoning: str | None = None
+    tool_call: dict | None = None
+    metadata: dict | None = None
+
+
+@dataclass
+class Step:
+    """A single step in an agent's trajectory."""
+
+    thought: str = ""
+    action: dict | None = None
+    observation: str | None = None
+    answer: str | None = None
+    metadata: dict | None = None
+
+
+class Trajectory:
+    """Records agent execution as a sequence of runs."""
+
+    def __init__(self) -> None:
+        self.runs: list[dict] = []
+
+    def initialize(self, query: str) -> None:
+        """Register a new run with the given query."""
+        self.runs.append({"query": query, "steps": []})
+
+    def add(self, response: Response, observation: str | None = None) -> None:
+        """Record a step from a Response, optionally with an observation."""
+        # Add THOUGHT
+        step = Step(
+            thought=response.reasoning or "",
+            metadata=response.metadata,
+        )
+
+        # Add ACTION/OBSERVATION or ANSWER
+        if observation is not None:
+            step.action = response.tool_call
+            step.observation = observation
+        else:
+            step.answer = response.content
+
+        self.runs[-1]["steps"].append(step)
+
+
+class LLM:
+    def __init__(
+        self,
+        model: str,
+        base_url: str = "http://127.0.0.1:8080/v1/chat/completions",
+        api_key: str = "no_key",
+        think: bool = False,
+        temperature: float | None = None,
+    ):
+        """Initialize the LLM with the given model."""
+        self.model = model
+        self.base_url = base_url
+        self.api_key = api_key
+        self.think = think
+        self.temperature = temperature
+
+    def generate(self, messages: list[dict], tools: list | None = None) -> Response:
+        """Generate a response from the LLM given a list of messages."""
+        # Build the request body
+        body = {
+            "model": self.model,
+            "messages": messages,
+        }
+
+        # Tools and Reasoning
+        if tools:
+            body["tools"] = tools
+        if not self.think:
+            body["reasoning_effort"] = "none"
+        else:
+            body["reasoning_effort"] = "medium"
+        if self.temperature is not None:
+            body["temperature"] = self.temperature
+
+        # POST to the configured OpenAI-compatible chat completions endpoint
+        request = urllib.request.Request(
+            self.base_url,
+            data=json.dumps(body).encode(),
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {self.api_key}",
+            },
+            method="POST",
+        )
+        with urllib.request.urlopen(request) as response:
+            data = json.loads(response.read())
+
+        # Extract message, tool_call, and metadata
+        message = data["choices"][0]["message"]
+        reasoning = message.get("reasoning") or message.get("reasoning_content")
+        tool_calls = message.get("tool_calls")
+        tool_call = tool_calls[0] if tool_calls else None
+        metadata = {
+            "model": data["model"],
+            "prompt_tokens": data["usage"]["prompt_tokens"],
+            "completion_tokens": data["usage"]["completion_tokens"],
+        }
+
+        # Format as Response dataclass
+        return Response(
+            content=message.get("content"),
+            reasoning=reasoning,
+            tool_call=tool_call,
+            metadata=metadata,
+        )
+
+
+class EmbeddingModel:
+    """Generate embeddings."""
+
+    def __init__(
+        self,
+        model: str,
+        base_url: str = "http://localhost:11434/v1",
+    ):
+        """Initialize the embedding model with the given model."""
+        self.model = model
+        self.base_url = base_url
+
+    def embed(self, text: str) -> list[float]:
+        """Convert text into a numerical vector."""
+        # POST to the OpenAI-compatible /embeddings endpoint
+        request = urllib.request.Request(
+            f"{self.base_url}/embeddings",
+            data=json.dumps({"model": self.model, "input": text}).encode(),
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(request) as resp:
+            response = json.loads(resp.read())
+
+        # Extract and return the embedding
+        return response["data"][0]["embedding"]
+
+
+LLAMA_URL = "http://127.0.0.1:8080/v1/chat/completions"
+MODEL = "local-model"
+
+
+def chat(message):
+    data = json.dumps(
+        {
+            "model": MODEL,
+            "messages": [{"role": "user", "content": message}],
+            "temperature": 0.7,
+            "max_tokens": 512,
+        }
+    ).encode("utf-8")
+
+    req = urllib.request.Request(
+        url=LLAMA_URL,
+        data=data,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+
+    with urllib.request.urlopen(req) as response:
+        result = json.loads(response.read())
+
+    return result["choices"][0]["message"]["content"]
+
+
+if __name__ == "__main__":
+    print(chat("Hi! How's life?"))
