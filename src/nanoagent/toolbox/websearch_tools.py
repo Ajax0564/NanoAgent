@@ -6,6 +6,10 @@ from ddgs import DDGS
 from ddgs.exceptions import DDGSException, RatelimitException, TimeoutException
 
 
+DEFAULT_MAX_RESULTS = 3
+SEARCH_TIMEOUT_SECONDS = 5
+
+
 class WebSearchTool:
     """
     Search the web for current information.
@@ -34,14 +38,14 @@ class WebSearchTool:
                     "max_results": {
                         "type": "integer",
                         "description": "Maximum number of results.",
-                        "default": 5,
+                        "default": DEFAULT_MAX_RESULTS,
                     },
                 },
                 "required": ["query"],
             },
         }
 
-    def execute(self, query: str, max_results: int = 5) -> str:
+    def execute(self, query: str, max_results: int = DEFAULT_MAX_RESULTS) -> str:
 
         # Validate input
         if not isinstance(query, str) or not query.strip():
@@ -52,7 +56,7 @@ class WebSearchTool:
         max_results = max(1, min(int(max_results), 10))
 
         try:
-            with DDGS() as ddgs:
+            with DDGS(timeout=SEARCH_TIMEOUT_SECONDS) as ddgs:
                 results = list(ddgs.text(query.strip(), max_results=max_results))
 
             searched_at = datetime.now(ZoneInfo("Asia/Kolkata")).isoformat(

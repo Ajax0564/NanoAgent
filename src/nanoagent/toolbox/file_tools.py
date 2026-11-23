@@ -1,8 +1,6 @@
 import csv
 import zipfile
 from pathlib import Path
-import subprocess
-import sys
 
 TEXT_EXTENSIONS = [
     ".txt",
@@ -148,24 +146,3 @@ def read_file(file_path: str, start_line: int = 1, end_line: int = -1) -> str:
         return _read_excel(file_path)
     else:
         return _read_text_file(file_path, start_line, end_line)
-
-
-def execute_python(code: str) -> str:
-    """Execute Python code and return output."""
-    try:
-        result = subprocess.run(
-            [sys.executable, "-c", code],
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-    except subprocess.TimeoutExpired:
-        return "Error: Code execution timed out (30s limit)."
-
-    if result.returncode != 0:
-        return (
-            f"Exit code {result.returncode}\n"
-            f"STDOUT:\n{result.stdout}\n"
-            f"STDERR:\n{result.stderr}"
-        ).strip()
-    return result.stdout.strip() or "(no output)"

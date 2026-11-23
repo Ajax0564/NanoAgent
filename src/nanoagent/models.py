@@ -1,7 +1,11 @@
-# llama-server -m .\LFM3-1.7B-Q4_K_M.gguf --port 8080
+#  llama-server -m .\LFM3-1.7B-Q4_K_M.gguf --port 8080 -c 16384 -np 1  -t 4 -b 512 -ub 128 --metrics # 16k -> 16384
 import json
+import math
+import re
 import urllib.request
 from dataclasses import dataclass
+from urllib.error import HTTPError
+from urllib.parse import urlsplit, urlunsplit
 
 
 @dataclass
@@ -23,6 +27,17 @@ class Step:
     observation: str | None = None
     answer: str | None = None
     metadata: dict | None = None
+
+
+@dataclass(frozen=True)
+class SlotContext:
+    """Context information reported for one llama.cpp server slot."""
+
+    slot_id: int
+    context_size: int
+    prompt_tokens: int | None
+    cached_prompt_tokens: int | None
+    is_processing: bool | None
 
 
 class Trajectory:
@@ -68,6 +83,118 @@ class LLM:
         self.api_key = api_key
         self.think = think
         self.temperature = temperature
+
+    def _monitoring_url(self, endpoint: str) -> str:
+        parsed_url = urlsplit(self.base_url)
+        path = parsed_url.path.rstrip("/")
+        for endpoint_suffix in ("/v1/chat/completions", "/chat/completions"):
+            if path.endswith(endpoint_suffix):
+                path = path[: -len(endpoint_suffix)]
+                break
+        else:
+            raise ValueError(
+                "Cannot derive the llama.cpp monitoring URL from the chat endpoint."
+            )
+        return urlunsplit(
+            (parsed_url.scheme, parsed_url.netloc, f"{path}/{endpoint}", "", "")
+        )
+
+    def slot_context(self) -> list[SlotContext] | None:
+        """Return per-slot prompt/context details when llama.cpp exposes them."""
+        request = urllib.request.Request(
+            self._monitoring_url("slots"),
+            headers={"Authorization": f"Bearer {self.api_key}"},
+            method="GET",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=2) as response:
+                data = json.loads(response.read())
+        except HTTPError as error:
+            if error.code in (404, 501):
+                return None
+            raise
+
+        if not isinstance(data, list):
+            raise ValueError("The llama.cpp /slots response must be a JSON array.")
+
+        slots = []
+        for index, slot in enumerate(data):
+            if not isinstance(slot, dict):
+                raise ValueError(f"Invalid llama.cpp slot entry at index {index}.")
+
+            def optional_nonnegative_int(field: str) -> int | None:
+                value = slot.get(field)
+                if value is None:
+                    return None
+                if type(value) is not int or value < 0:
+                    raise ValueError(
+                        f"Invalid {field} value in llama.cpp slot {index}."
+                    )
+                return value
+
+            slot_id = optional_nonnegative_int("id")
+            context_size = optional_nonnegative_int("n_ctx")
+            if slot_id is None or context_size is None or context_size == 0:
+                raise ValueError(
+                    f"llama.cpp slot {index} is missing its id or context size."
+                )
+
+            is_processing = slot.get("is_processing")
+            if is_processing is not None and not isinstance(is_processing, bool):
+                raise ValueError(
+                    f"Invalid is_processing value in llama.cpp slot {index}."
+                )
+
+            slots.append(
+                SlotContext(
+                    slot_id=slot_id,
+                    context_size=context_size,
+                    prompt_tokens=optional_nonnegative_int("n_prompt_tokens"),
+                    cached_prompt_tokens=optional_nonnegative_int(
+                        "n_prompt_tokens_cache"
+                    ),
+                    is_processing=is_processing,
+                )
+            )
+        return slots
+
+    def kv_cache_usage_ratio(self) -> float | None:
+        """Return llama.cpp's current KV-cache usage ratio when metrics are enabled."""
+        request = urllib.request.Request(
+            self._monitoring_url("metrics"),
+            headers={"Authorization": f"Bearer {self.api_key}"},
+            method="GET",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=2) as response:
+                metrics = response.read().decode("utf-8")
+        except HTTPError as error:
+            if error.code in (404, 501):
+                return None
+            raise
+
+        metric_pattern = re.compile(
+            r"^llamacpp:kv_cache_usage_ratio(?:\{[^}]*\})?\s+(\S+)"
+        )
+        ratios = []
+        for line in metrics.splitlines():
+            match = metric_pattern.match(line)
+            if match:
+                ratio = float(match.group(1))
+                if not math.isfinite(ratio) or not 0 <= ratio <= 1:
+                    raise ValueError(
+                        f"Invalid llama.cpp KV-cache usage ratio: {ratio}."
+                    )
+                ratios.append(ratio)
+
+        if not ratios:
+            return None
+        if len(ratios) > 1:
+            raise ValueError(
+                "The llama.cpp metrics endpoint returned multiple KV-cache usage "
+                "ratios; a single total cannot be determined."
+            )
+        return ratios[0]
 
     def generate(self, messages: list[dict], tools: list | None = None) -> Response:
         """Generate a response from the LLM given a list of messages."""
@@ -145,34 +272,3 @@ class EmbeddingModel:
 
         # Extract and return the embedding
         return response["data"][0]["embedding"]
-
-
-LLAMA_URL = "http://127.0.0.1:8080/v1/chat/completions"
-MODEL = "local-model"
-
-
-def chat(message):
-    data = json.dumps(
-        {
-            "model": MODEL,
-            "messages": [{"role": "user", "content": message}],
-            "temperature": 0.7,
-            "max_tokens": 512,
-        }
-    ).encode("utf-8")
-
-    req = urllib.request.Request(
-        url=LLAMA_URL,
-        data=data,
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-
-    with urllib.request.urlopen(req) as response:
-        result = json.loads(response.read())
-
-    return result["choices"][0]["message"]["content"]
-
-
-if __name__ == "__main__":
-    print(chat("Hi! How's life?"))
