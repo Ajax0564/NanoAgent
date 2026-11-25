@@ -109,6 +109,80 @@ or `/agent file_agent`. Each profile keeps its own conversation memory.
 
 Use `uv run nanoagent --help` to see all command-line options.
 
+## Agent flow: prompt to final answer
+
+For example, start the math profile:
+
+```powershell
+uv run nanoagent --agent math_agent
+```
+
+Then enter:
+
+> Solve `x^2 - 5x + 6 = 0`, evaluate it at `x = 2` and `x = 5`, and plot it
+> for `x` from -10 to 10.
+
+The CLI creates the model client and agent profiles, then activates
+`math_agent`. The math profile makes `calculator`, `plot_expression`, and
+`get_date_and_time` available. Its instructions are included in the system
+message; native function-tool schemas are sent separately with each model
+request.
+
+```mermaid
+flowchart TD
+    A["Start CLI with --agent math_agent"] --> B["Select math profile and register tools"]
+    B --> C["Enter prompt"]
+    C --> D["Add date/time context and prompt to conversation memory"]
+    D --> E["Send messages and tool schemas to the local model"]
+    E --> F{"Model returns a tool call?"}
+    F -- Yes --> G["Normalize and validate tool name and arguments"]
+    G --> H{"Tool call valid?"}
+    H -- Yes --> I["Execute selected tool"]
+    I --> J["Add tool result to memory"]
+    J --> E
+    F -- No --> P["Treat response as final answer"]
+    P --> K["Display answer and run metrics"]
+    H -- No --> L{"Correction available?"}
+    L -- Yes --> M["Add failure observation to memory"]
+    M --> E
+    L -- No --> N["Return tool failure"]
+```
+
+For this request, the model may call tools in an order like this (the exact
+calls depend on the model):
+
+```text
+calculator(operation="solve", expression="x**2 - 5*x + 6", variable="x")
+→ Result: [2, 3]
+
+calculator(operation="calculate", expression="2**2 - 5*2 + 6")
+→ Result: 0
+
+calculator(operation="calculate", expression="5**2 - 5*5 + 6")
+→ Result: 6
+
+plot_expression(
+  expression="x**2 - 5*x + 6",
+  x_min=-10,
+  x_max=10,
+  filename="math_plot.png"
+)
+→ Success: Plot saved successfully to 'math_plot.png'.
+```
+
+After each tool call, NanoAgent adds the result to the conversation and sends
+the updated messages to the model. When the model responds without another
+tool call, that response is the final answer. For example:
+
+> Factoring gives `(x - 2)(x - 3) = 0`, so the roots are `x = 2` and `x = 3`.
+> The expression evaluates to `0` at `x = 2` and `6` at `x = 5`. The plot was
+> saved as `math_plot.png`.
+
+The CLI reports progress and selected tools but does not display private model
+reasoning. Run events, model requests and responses, tool calls and results,
+and final answers are appended to `nanoagent.jsonl` by default. Logs may
+contain sensitive prompt content.
+
 ## CLI commands
 
 - `/help` — list commands
