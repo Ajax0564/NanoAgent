@@ -30,6 +30,8 @@ contain sensitive prompt content; protect or remove them as appropriate.
   files or line ranges, create/edit workspace files, run Python snippets or
   files, and run the project's `unittest` suite after approval. File access is
   limited to the current workspace.
+- The code agent can create and edit Python files in the workspace without
+  approval.
 - Python and test execution require explicit approval and have time and output
   limits. They run with the current process's permissions and are not sandboxed.
 - Three selectable profiles expose tools from only one tool module each:
@@ -60,7 +62,7 @@ To serve the LFM
 model with `llama.cpp`, start the server like this:
 
 ```powershell
-llama-server -m .\LFM3-1.7B-Q4_K_M.gguf --port 8080
+llama-server -m .\LFM3-1.7B-Q4_K_M.gguf --port 8080 -c 16384 -np 1  -t 4 -b 512 -ub 128 --metrics
 ```
 
 NanoAgent reads llama.cpp's `/slots` endpoint after each task and reports the
@@ -110,6 +112,9 @@ Use `uv run nanoagent --help` to see all command-line options.
 ## CLI commands
 
 - `/help` — list commands
+- `/multiline` — enter a prompt across multiple lines; enter `/send` on its own
+  line to submit, or `/cancel` to discard it. You can paste a multiline prompt
+  directly after entering this mode.
 - `/clear` — clear conversation history while keeping system instructions
 - `/memory` — inspect the current message history
 - `/model` — show the configured model name

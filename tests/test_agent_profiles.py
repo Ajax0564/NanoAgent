@@ -25,8 +25,6 @@ PROFILE_TOOLS = {
 PROFILE_APPROVALS = {
     "math_agent": set(),
     "code_agent": {
-        "write_file",
-        "edit_file",
         "run_python",
         "run_python_file",
         "run_tests",
@@ -39,13 +37,15 @@ class AgentProfileTests(unittest.TestCase):
     def test_code_agent_guides_workspace_search_and_python_source_inspection(self):
         instructions = AGENT_PROFILES["code_agent"].instructions
 
-        self.assertIn("create or update a file", instructions)
-        self.assertIn("if they do not specify one", instructions)
+        self.assertIn("When asked to create or modify code", instructions)
+        self.assertIn("Use the requested filename", instructions)
         self.assertIn("*.py", instructions)
         self.assertIn("search_text", instructions)
         self.assertIn("configuration files", instructions)
         self.assertIn("inspect_file", instructions)
         self.assertIn("Never pass a directory", instructions)
+        self.assertIn("without requesting approval", instructions)
+        self.assertIn("approval before executing Python code or tests", instructions)
 
     def test_profiles_expose_tools_from_only_their_configured_module(self):
         for name in AGENT_PROFILES:

@@ -8,15 +8,28 @@ class ReAct:
     """ReAct module."""
 
     def __init__(self, max_steps: int = 10):
-        """Initialize ReAct module.
+        """Set the maximum number of model/tool iterations per request.
 
-        Arguments:
-            max_steps: Maximum number of ReAct steps to perform.
+        Args:
+            max_steps: Upper bound on iterations before the agent returns its
+                max-steps response.
+
+        Returns:
+            None. Stores the step limit.
         """
         self.max_steps = max_steps
 
     @property
     def prompt(self) -> str:
+        """Return instructions describing the text-based ReAct protocol.
+
+        Inputs:
+            None.
+
+        Returns:
+            The system-prompt text that specifies THOUGHT/ACTION formatting and
+            the ``final_answer`` completion action.
+        """
         return """
 # ReAct (Reason and Act)
 
@@ -53,7 +66,16 @@ You can also use `final_answer` to directly reply to a user's question without u
 """
 
     def parse(self, response: Response) -> Response:
-        """Parse a ReAct formatted response into THOUGHT and ACTION."""
+        """Extract THOUGHT and ACTION sections from a text response.
+
+        Args:
+            response: Response whose content may contain ReAct section labels.
+
+        Returns:
+            The same response object with ``content`` replaced by the extracted
+            ACTION and ``reasoning`` replaced by THOUGHT. Missing sections become
+            empty strings.
+        """
         text = response.content
 
         # The patterns for each section
@@ -79,9 +101,25 @@ class NativeReAct(ReAct):
 
     @property
     def prompt(self) -> str:
+        """Return no extra instructions for native tool-calling models.
+
+        Inputs:
+            None.
+
+        Returns:
+            An empty string because the model API supplies tool schemas directly.
+        """
         return ""
 
     def parse(self, response: Response) -> Response:
+        """Pass a native tool-calling response through unchanged.
+
+        Args:
+            response: Model response containing its native tool-call structure.
+
+        Returns:
+            The same response object.
+        """
         return response
 
 
@@ -89,11 +127,15 @@ class PlanAndSolve(ReAct):
     """ReAct planner that gives the LLM tools to create and update its own plan."""
 
     def __init__(self, tools: Tools, max_steps: int = 10):
-        """Initialize PlanAndSolve planner.
+        """Initialize a planner and register its plan-management tools.
 
-        Arguments:
-            tools: The tool registry to attach `update_plan` and `mark_done` to.
-            max_steps: Maximum number of ReAct steps to perform.
+        Args:
+            tools: Registry that receives the ``update_plan`` and ``mark_done``
+                callable tools.
+            max_steps: Maximum model/tool iterations for the request.
+
+        Returns:
+            None. Initializes an empty plan and attaches both tools to ``tools``.
         """
         super().__init__(max_steps)
         self.plan: list[dict] = []
@@ -111,6 +153,15 @@ class PlanAndSolve(ReAct):
 
     @property
     def prompt(self) -> str:
+        """Return ReAct instructions augmented with planning guidance.
+
+        Inputs:
+            None.
+
+        Returns:
+            The base ReAct prompt plus instructions to create, update, and mark
+            plan items complete.
+        """
         return super().prompt + (
             "\n## Planning\n\n"
             "For non-trivial tasks, call `update_plan` first to outline your approach, "
@@ -119,16 +170,43 @@ class PlanAndSolve(ReAct):
         )
 
     def update_plan(self, items: list[str]) -> str:
-        """Replace the plan with a new list of sub-tasks."""
+        """Replace the current plan with unfinished sub-tasks.
+
+        Args:
+            items: Ordered task descriptions for the plan.
+
+        Returns:
+            A status string containing the rendered plan. Every new task starts
+            with ``done=False``.
+        """
         self.plan = [{"task": item, "done": False} for item in items]
         return f"Plan updated:\n{self._render()}"
 
     def mark_done(self, index: int) -> str:
-        """Mark a sub-task complete by 1-based index."""
+        """Mark one plan item complete using its 1-based position.
+
+        Args:
+            index: Position of the task in the current plan, starting at one.
+
+        Returns:
+            A status string containing the updated rendered plan.
+
+        Notes:
+            The valid caller range is ``1`` through the current plan length.
+        """
         self.plan[index - 1]["done"] = True
         return f"Plan:\n{self._render()}"
 
     def _render(self) -> str:
+        """Format all plan items as numbered checkbox lines.
+
+        Inputs:
+            None.
+
+        Returns:
+            A newline-separated string using ``[x]`` for completed tasks and
+            ``[ ]`` for pending tasks; an empty plan produces an empty string.
+        """
         return "\n".join(
             f"{'[x]' if item['done'] else '[ ]'} {i + 1}. {item['task']}"
             for i, item in enumerate(self.plan)
@@ -139,17 +217,31 @@ class Reflexion:
     """Reflector that periodically critiques recent steps and injects a course correction."""
 
     def __init__(self, llm: LLM, interval: int = 3):
-        """Initialize Reflexion reflector.
+        """Configure periodic critique generation.
 
-        Arguments:
-            llm: The LLM used to generate critiques.
-            interval: Reflect every `interval` steps.
+        Args:
+            llm: Model client used to produce critiques.
+            interval: Positive step interval at which ``reflect`` requests a
+                critique. Zero causes ``ZeroDivisionError`` on nonzero steps.
+
+        Returns:
+            None. Stores the model and reflection interval.
         """
         self.llm = llm
         self.interval = interval
 
     def reflect(self, memory: Memory, step: int) -> None:
-        """Critique recent steps and add a corrective user message to memory."""
+        """Ask the model for a critique on scheduled steps and store it.
+
+        Args:
+            memory: Conversation memory supplying the recent messages and receiving
+                the corrective reflection message.
+            step: Current zero-based step number.
+
+        Returns:
+            None. Does nothing for step zero or steps not divisible by ``interval``;
+            otherwise appends a critique as a user message.
+        """
         if step == 0 or step % self.interval:
             return
         critique = self.llm.generate(

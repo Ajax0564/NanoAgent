@@ -454,8 +454,6 @@ class CodeToolTests(unittest.TestCase):
         self.assertEqual(
             set(tools.requires_approval),
             {
-                "write_file",
-                "edit_file",
                 "run_python",
                 "run_python_file",
                 "run_tests",
@@ -485,6 +483,43 @@ class CodeToolTests(unittest.TestCase):
         )
         self.assertEqual(python_schema["required"], ["code"])
         self.assertEqual(python_schema["properties"]["code"], {"type": "string"})
+
+    def test_code_agent_writes_and_edits_without_approval(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            with patch("nanoagent.toolbox.Path.cwd", return_value=root):
+                tools = create_native_code_tools()
+                with patch(
+                    "builtins.input",
+                    side_effect=AssertionError("unexpected approval"),
+                ):
+                    tools.execute(
+                        Response(
+                            tool_call={
+                                "tool": "write_file",
+                                "kwargs": {
+                                    "file_path": "example.py",
+                                    "content": "answer = 1\n",
+                                },
+                            }
+                        )
+                    )
+                    tools.execute(
+                        Response(
+                            tool_call={
+                                "tool": "edit_file",
+                                "kwargs": {
+                                    "file_path": "example.py",
+                                    "old_text": "answer = 1",
+                                    "new_text": "answer = 2",
+                                },
+                            }
+                        )
+                    )
+
+            self.assertEqual(
+                (root / "example.py").read_text(encoding="utf-8"), "answer = 2\n"
+            )
 
     def test_run_tests_requires_approval_and_describes_the_test_directory(self):
         tools = create_native_code_tools()

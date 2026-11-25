@@ -7,6 +7,27 @@ from nanoagent.models import SlotContext
 
 
 class CliTests(unittest.TestCase):
+    def test_multiline_input_preserves_pasted_lines_and_blank_lines(self):
+        with (
+            patch(
+                "builtins.input",
+                side_effect=["First line", "", "Third line", "/send"],
+            ),
+            patch.object(cli.console, "print"),
+        ):
+            query = cli._read_multiline_query()
+
+        self.assertEqual(query, "First line\n\nThird line")
+
+    def test_multiline_input_can_be_canceled(self):
+        with (
+            patch("builtins.input", side_effect=["Discard this", "/cancel"]),
+            patch.object(cli.console, "print"),
+        ):
+            query = cli._read_multiline_query()
+
+        self.assertIsNone(query)
+
     def test_rich_progress_pauses_while_tools_may_request_approval(self):
         progress = Mock()
         used_tools = []

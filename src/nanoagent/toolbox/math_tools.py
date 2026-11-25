@@ -21,6 +21,15 @@ class PlottingTool:
     """
 
     def get_schema(self):
+        """Return the native tool schema for mathematical expression plotting.
+
+        Inputs:
+            None.
+
+        Returns:
+            A tool definition containing an expression, optional x-axis bounds,
+            and output filename schema.
+        """
         return {
             "name": "plot_expression",
             "description": "Generates a 2D line plot of a mathematical expression and saves it as an image.",
@@ -55,6 +64,18 @@ class PlottingTool:
         x_max: float = 10.0,
         filename: str = "math_plot.png",
     ) -> str:
+        """Evaluate and save a sampled 2D plot of an expression in ``x``.
+
+        Args:
+            expression: SymPy-compatible expression to plot.
+            x_min: Inclusive start of the sampled x range.
+            x_max: Inclusive end of the sampled x range.
+            filename: Destination image path; defaults to ``math_plot.png``.
+
+        Returns:
+            A success message with the output path, or a plotting-error message.
+            The function closes its Matplotlib figure in either case.
+        """
         try:
             # Setup transformations
             transformations = standard_transformations + (
@@ -116,11 +137,28 @@ class CalculatorTool:
     """
 
     def __init__(self):
+        """Prepare SymPy parsing transformations for implicit multiplication.
+
+        Inputs:
+            None.
+
+        Returns:
+            None. Stores the parser transformation tuple used by ``parse``.
+        """
         self.transformations = standard_transformations + (
             implicit_multiplication_application,
         )
 
     def get_schema(self):
+        """Return the native schema for calculator operations and their inputs.
+
+        Inputs:
+            None.
+
+        Returns:
+            A tool definition listing the supported operation names and optional
+            expression, calculus, matrix, and statistics arguments.
+        """
         return {
             "name": "calculator",
             "description": (
@@ -189,6 +227,17 @@ class CalculatorTool:
         }
 
     def parse(self, expression):
+        """Parse a SymPy expression with standard and implicit-multiplication rules.
+
+        Args:
+            expression: Source string representing a mathematical expression.
+
+        Returns:
+            A SymPy expression tree.
+
+        Raises:
+            SyntaxError, TypeError, ValueError: Depending on the parser failure.
+        """
         return parse_expr(
             expression, transformations=self.transformations, evaluate=True
         )
@@ -205,7 +254,28 @@ class CalculatorTool:
         matrix: list = None,
         data=None,
     ):
+        """Perform the selected symbolic, numeric, matrix, or statistics operation.
 
+        Args:
+            operation: Supported calculator operation such as ``solve``,
+                ``differentiate``, ``determinant``, or ``mean``.
+            expression: Expression used by algebra/calculus operations.
+            variable: Symbol used for equation solving and calculus.
+            point: Evaluation point for limits and series.
+            lower: Optional lower bound accepted by the tool schema.
+            upper: Optional upper bound accepted by the tool schema.
+            order: Series expansion order, constrained to 1 through 30.
+            matrix: Matrix data for determinant, inverse, rank, or eigenvalues.
+            data: Numeric values for mean, median, or variance.
+
+        Returns:
+            ``Result: ...`` with the operation result, or ``Calculation error: ...``
+            when the operation, input, or SymPy computation fails.
+
+        Notes:
+            Although ``lower`` and ``upper`` are accepted, the current operation
+            dispatcher does not use them.
+        """
         try:
             x = sp.Symbol(variable)
 
@@ -303,11 +373,14 @@ class CalculatorTool:
 
 
 def get_date_and_time() -> str:
-    """
-    Returns the current date and time.
-    Use this tool when the user asks about today's date, current time,
-    or any time-relative question like 'what day is it'.
-    No input is required for this tool.
+    """Return the current wall-clock time in the Asia/Kolkata timezone.
+
+    Inputs:
+        None.
+
+    Returns:
+        A formatted weekday, date, time, and timezone string suitable for
+        time-sensitive answers.
     """
     now = datetime.now(ZoneInfo("Asia/Kolkata"))
     return (

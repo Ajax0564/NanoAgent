@@ -23,6 +23,15 @@ class WebSearchTool:
     """
 
     def get_schema(self):
+        """Return the native schema for the web-search tool.
+
+        Inputs:
+            None.
+
+        Returns:
+            A tool definition requiring a query and describing the optional
+            maximum-results field.
+        """
         return {
             "name": "web_search",
             "description": (
@@ -46,7 +55,20 @@ class WebSearchTool:
         }
 
     def execute(self, query: str, max_results: int = DEFAULT_MAX_RESULTS) -> str:
+        """Search the web and encode results or provider failures as JSON.
 
+        Args:
+            query: Non-empty search phrase.
+            max_results: Requested result count, clamped to the range 1 through 10.
+
+        Returns:
+            A JSON string with success status, query, retrieval timestamp, and
+            result metadata; failures include a classified error.
+
+        Raises:
+            TypeError, ValueError: If ``max_results`` cannot be converted to an
+                integer.
+        """
         # Validate input
         if not isinstance(query, str) or not query.strip():
             return json.dumps(

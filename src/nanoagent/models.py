@@ -44,14 +44,41 @@ class Trajectory:
     """Records agent execution as a sequence of runs."""
 
     def __init__(self) -> None:
+        """Create an empty list of recorded runs.
+
+        Inputs:
+            None.
+
+        Returns:
+            None. Initializes ``runs`` for subsequent calls to ``initialize``.
+        """
         self.runs: list[dict] = []
 
     def initialize(self, query: str) -> None:
-        """Register a new run with the given query."""
+        """Start a run with the supplied user request.
+
+        Args:
+            query: Request text associated with the run.
+
+        Returns:
+            None. Appends a run record with an empty ``steps`` list.
+        """
         self.runs.append({"query": query, "steps": []})
 
     def add(self, response: Response, observation: str | None = None) -> None:
-        """Record a step from a Response, optionally with an observation."""
+        """Record one model answer or tool interaction in the current run.
+
+        Args:
+            response: Model response containing reasoning and response content.
+            observation: Tool result; when supplied, the response's tool call and
+                this observation are recorded as an action/result pair.
+
+        Returns:
+            None. Appends a ``Step`` to the latest run.
+
+        Raises:
+            IndexError: If ``initialize`` has not created a run.
+        """
         # Add THOUGHT
         step = Step(
             thought=response.reasoning or "",
@@ -77,7 +104,18 @@ class LLM:
         think: bool = False,
         temperature: float | None = None,
     ):
-        """Initialize the LLM with the given model."""
+        """Configure an OpenAI-compatible chat-completions client.
+
+        Args:
+            model: Model identifier expected by the local server.
+            base_url: Chat-completions endpoint URL.
+            api_key: Bearer token sent with requests.
+            think: Whether to request medium reasoning effort instead of disabling it.
+            temperature: Optional sampling temperature included in requests.
+
+        Returns:
+            None. Stores request configuration; no network call is made.
+        """
         self.model = model
         self.base_url = base_url
         self.api_key = api_key
@@ -85,6 +123,17 @@ class LLM:
         self.temperature = temperature
 
     def _monitoring_url(self, endpoint: str) -> str:
+        """Derive a llama.cpp monitoring endpoint from the chat URL.
+
+        Args:
+            endpoint: Monitoring path component, such as ``slots`` or ``metrics``.
+
+        Returns:
+            URL with the chat-completions suffix replaced by the monitoring path.
+
+        Raises:
+            ValueError: If ``base_url`` does not end in a supported chat endpoint.
+        """
         parsed_url = urlsplit(self.base_url)
         path = parsed_url.path.rstrip("/")
         for endpoint_suffix in ("/v1/chat/completions", "/chat/completions"):
@@ -100,7 +149,20 @@ class LLM:
         )
 
     def slot_context(self) -> list[SlotContext] | None:
-        """Return per-slot prompt/context details when llama.cpp exposes them."""
+        """Fetch and validate llama.cpp's per-slot context counters.
+
+        Inputs:
+            None. Sends an authenticated GET request to the derived ``/slots`` URL.
+
+        Returns:
+            A list of ``SlotContext`` records, or ``None`` when the endpoint
+            reports that it is unavailable (HTTP 404 or 501).
+
+        Raises:
+            HTTPError: For other HTTP failures.
+            ValueError: If the response JSON or any slot fields are malformed.
+            URLError: If the endpoint cannot be reached.
+        """
         request = urllib.request.Request(
             self._monitoring_url("slots"),
             headers={"Authorization": f"Bearer {self.api_key}"},
@@ -123,6 +185,17 @@ class LLM:
                 raise ValueError(f"Invalid llama.cpp slot entry at index {index}.")
 
             def optional_nonnegative_int(field: str) -> int | None:
+                """Read an optional nonnegative integer from the current slot.
+
+                Args:
+                    field: Slot field name to retrieve.
+
+                Returns:
+                    The integer value, or ``None`` when the field is absent/null.
+
+                Raises:
+                    ValueError: If the field is not an integer or is negative.
+                """
                 value = slot.get(field)
                 if value is None:
                     return None
@@ -159,7 +232,22 @@ class LLM:
         return slots
 
     def kv_cache_usage_ratio(self) -> float | None:
-        """Return llama.cpp's current KV-cache usage ratio when metrics are enabled."""
+        """Fetch llama.cpp's aggregate KV-cache utilization metric.
+
+        Inputs:
+            None. Sends an authenticated GET request to the derived ``/metrics``
+            URL and parses ``llamacpp:kv_cache_usage_ratio``.
+
+        Returns:
+            A utilization ratio from 0.0 through 1.0, or ``None`` when the metric
+            is absent or the endpoint returns HTTP 404/501.
+
+        Raises:
+            HTTPError: For other HTTP failures.
+            ValueError: If a reported ratio is invalid or multiple ratios prevent
+                determining one aggregate value.
+            URLError: If the endpoint cannot be reached.
+        """
         request = urllib.request.Request(
             self._monitoring_url("metrics"),
             headers={"Authorization": f"Bearer {self.api_key}"},
@@ -197,7 +285,22 @@ class LLM:
         return ratios[0]
 
     def generate(self, messages: list[dict], tools: list | None = None) -> Response:
-        """Generate a response from the LLM given a list of messages."""
+        """Send chat messages and optional tool schemas to the model server.
+
+        Args:
+            messages: Conversation messages in chat-completions format.
+            tools: Optional native function definitions included in the request.
+
+        Returns:
+            A ``Response`` populated from the first returned choice, including
+            content, reasoning, the first tool call, and token/model metadata.
+
+        Raises:
+            HTTPError: If the server rejects the request.
+            URLError: If the server cannot be reached.
+            KeyError, IndexError, or JSONDecodeError: If the response body does
+                not contain the expected chat-completions fields.
+        """
         # Build the request body
         body = {
             "model": self.model,
@@ -255,12 +358,33 @@ class EmbeddingModel:
         model: str,
         base_url: str = "http://localhost:11434/v1",
     ):
-        """Initialize the embedding model with the given model."""
+        """Configure an OpenAI-compatible embeddings client.
+
+        Args:
+            model: Embedding model identifier expected by the server.
+            base_url: API base URL preceding the ``/embeddings`` endpoint.
+
+        Returns:
+            None. Stores configuration without making a network request.
+        """
         self.model = model
         self.base_url = base_url
 
     def embed(self, text: str) -> list[float]:
-        """Convert text into a numerical vector."""
+        """Request a vector embedding for one text string.
+
+        Args:
+            text: Input text to encode.
+
+        Returns:
+            The first embedding vector returned by the server.
+
+        Raises:
+            HTTPError: If the server rejects the request.
+            URLError: If the server cannot be reached.
+            KeyError, IndexError, or JSONDecodeError: If the response lacks the
+                expected embedding data.
+        """
         # POST to the OpenAI-compatible /embeddings endpoint
         request = urllib.request.Request(
             f"{self.base_url}/embeddings",
